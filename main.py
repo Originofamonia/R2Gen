@@ -14,19 +14,30 @@ def parse_agrs():
     parser = argparse.ArgumentParser()
 
     # Data input settings
-    parser.add_argument('--image_dir', type=str, default='data/iu_xray/images/', help='the path to the directory containing the data.')
-    parser.add_argument('--ann_path', type=str, default='data/iu_xray/annotation.json', help='the path to the directory containing the data.')
+    parser.add_argument('--image_dir', type=str, default='data/iu_xray/images/',
+                        help='the path to the directory containing the data.')
+    parser.add_argument('--ann_path', type=str,
+                        default='data/iu_xray/annotation.json',
+                        help='the path to the directory containing the data.')
 
     # Data loader settings
-    parser.add_argument('--dataset_name', type=str, default='iu_xray', choices=['iu_xray', 'mimic_cxr'], help='the dataset to be used.')
-    parser.add_argument('--max_seq_length', type=int, default=60, help='the maximum sequence length of the reports.')
-    parser.add_argument('--threshold', type=int, default=3, help='the cut off frequency for the words.')
-    parser.add_argument('--num_workers', type=int, default=2, help='the number of workers for dataloader.')
-    parser.add_argument('--batch_size', type=int, default=16, help='the number of samples for a batch')
+    parser.add_argument('--dataset_name', type=str, default='iu_xray',
+                        choices=['iu_xray', 'mimic_cxr'],
+                        help='the dataset to be used.')
+    parser.add_argument('--max_seq_length', type=int, default=60,
+                        help='the maximum sequence length of the reports.')
+    parser.add_argument('--threshold', type=int, default=3,
+                        help='the cut off frequency for the words.')
+    parser.add_argument('--num_workers', type=int, default=2,
+                        help='the number of workers for dataloader.')
+    parser.add_argument('--batch_size', type=int, default=16,
+                        help='the number of samples for a batch')
 
     # Model settings (for visual extractor)
-    parser.add_argument('--visual_extractor', type=str, default='resnet101', help='the visual extractor to be used.')
-    parser.add_argument('--visual_extractor_pretrained', type=bool, default=True, help='whether to load the pretrained visual extractor')
+    parser.add_argument('--visual_extractor', type=str, default='resnet101',
+                        help='the visual extractor to be used.')
+    parser.add_argument('--visual_extractor_pretrained', type=bool,
+                        default=True, help='whether to load the pretrained visual extractor')
 
     # Model settings (for Transformer)
     parser.add_argument('--d_model', type=int, default=512, help='the dimension of Transformer.')
@@ -57,7 +68,7 @@ def parse_agrs():
     parser.add_argument('--block_trigrams', type=int, default=1, help='whether to use block trigrams.')
 
     # Trainer settings
-    parser.add_argument('--n_gpu', type=int, default=1, help='the number of gpus to be used.')
+    parser.add_argument('--n_gpu', type=int, default=2, help='the number of gpus to be used.')
     parser.add_argument('--epochs', type=int, default=100, help='the number of training epochs.')
     parser.add_argument('--save_dir', type=str, default='results/iu_xray', help='the patch to save the models.')
     parser.add_argument('--record_dir', type=str, default='records/', help='the patch to save the results of experiments')
@@ -116,7 +127,8 @@ def main():
     lr_scheduler = build_lr_scheduler(args, optimizer)
 
     # build trainer and start to train
-    trainer = Trainer(model, criterion, metrics, optimizer, args, lr_scheduler, train_dataloader, val_dataloader, test_dataloader)
+    trainer = Trainer(model, criterion, metrics, optimizer, args, lr_scheduler,
+                      train_dataloader, val_dataloader, test_dataloader)
     trainer.train()
 
 
