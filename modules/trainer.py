@@ -191,7 +191,7 @@ class Trainer(BaseTrainer):
         train_loss = 0
         self.model.train()
         for batch_idx, batch in enumerate(self.train_dataloader):
-            batch = tuple(t.to(self.device) for t in batch)
+            batch = tuple(t.to(self.device) for t in batch[1:])
             images, reports_ids, reports_masks = batch
             output = self.model(images, reports_ids, mode='train')
             loss = self.criterion(output, reports_ids, reports_masks)
