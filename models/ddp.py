@@ -62,9 +62,9 @@ def run_demo(demo_fn, world_size):
              join=True)
 
 
-class ToyMpModel(nn.Module):
+class SplitModel(nn.Module):
     def __init__(self, dev0, dev1):
-        super(ToyMpModel, self).__init__()
+        super(SplitModel, self).__init__()
         self.dev0 = dev0
         self.dev1 = dev1
         self.net1 = torch.nn.Linear(10, 10).to(dev0)
@@ -79,13 +79,16 @@ class ToyMpModel(nn.Module):
 
 
 def demo_model_parallel(rank, world_size):
+    """
+    especially helpful when training large models with a huge amount of data.
+    """
     print(f"Running DDP with model parallel example on rank {rank}.")
     setup(rank, world_size)
 
     # setup mp_model and devices for this process
     dev0 = (rank * 2) % world_size
     dev1 = (rank * 2 + 1) % world_size
-    mp_model = ToyMpModel(dev0, dev1)
+    mp_model = SplitModel(dev0, dev1)
     ddp_mp_model = DDP(mp_model)
 
     loss_fn = nn.MSELoss()
