@@ -177,7 +177,8 @@ class BaseTrainer(object):
 
 
 class Trainer(BaseTrainer):
-    def __init__(self, model, criterion, metric_ftns, optimizer, args, lr_scheduler, train_dataloader, val_dataloader,
+    def __init__(self, model, criterion, metric_ftns, optimizer, args,
+                 lr_scheduler, train_dataloader, val_dataloader,
                  test_dataloader):
         super(Trainer, self).__init__(model, criterion, metric_ftns, optimizer, args)
         self.lr_scheduler = lr_scheduler
@@ -189,9 +190,9 @@ class Trainer(BaseTrainer):
 
         train_loss = 0
         self.model.train()
-        for batch_idx, (images_id, images, reports_ids, reports_masks) in enumerate(self.train_dataloader):
-            images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(self.device), reports_masks.to(
-                self.device)
+        for batch_idx, batch in enumerate(self.train_dataloader):
+            batch = tuple(t.to(self.device) for t in batch)
+            images, reports_ids, reports_masks = batch
             output = self.model(images, reports_ids, mode='train')
             loss = self.criterion(output, reports_ids, reports_masks)
             train_loss += loss.item()

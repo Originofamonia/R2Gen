@@ -1,3 +1,5 @@
+import os
+
 import torch
 import argparse
 import numpy as np
@@ -8,6 +10,8 @@ from modules.optimizers import build_optimizer, build_lr_scheduler
 from modules.trainer import Trainer
 from modules.loss import compute_loss
 from models.r2gen import R2GenModel
+
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 
 def parse_agrs():
