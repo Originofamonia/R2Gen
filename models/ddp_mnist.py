@@ -1,114 +1,121 @@
-# https://yangkky.github.io/2019/07/08/distributed-pytorch-tutorial.html
-# https://github.com/yangkky/distributed_tutorial/blob/master/src/mnist-distributed.py
+################
+## main.py文件
 import os
-from datetime import datetime
 import argparse
-import torch.multiprocessing as mp
-import torchvision
-import torchvision.transforms as transforms
+from tqdm import tqdm
 import torch
+import torchvision
 import torch.nn as nn
+import torch.nn.functional as F
+# 新增：
 import torch.distributed as dist
-# from apex.parallel import DistributedDataParallel as DDP
-# from apex import amp
 from torch.nn.parallel import DistributedDataParallel as DDP
-from ddp import setup
+
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'
 
 
-class ConvNet(nn.Module):
-    def __init__(self, num_classes=10):
-        super(ConvNet, self).__init__()
-        self.layer1 = nn.Sequential(
-            nn.Conv2d(3, 16, kernel_size=5, stride=1, padding=2),
-            nn.BatchNorm2d(16),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2))
-        self.layer2 = nn.Sequential(
-            nn.Conv2d(16, 32, kernel_size=5, stride=1, padding=2),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2))
-        self.fc = nn.Linear(2048, num_classes)
+# 1. 基础模块
+# 假设我们的模型是这个，与DDP无关
+class ToyModel(nn.Module):
+    def __init__(self):
+        super(ToyModel, self).__init__()
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.fc1 = nn.Linear(16 * 5 * 5, 120)
+        self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, 10)
 
     def forward(self, x):
-        out = self.layer1(x)
-        out = self.layer2(out)
-        out = out.reshape(out.size(0), -1)
-        out = self.fc(out)
-        return out
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(-1, 16 * 5 * 5)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        return x
 
 
-def run_ddp(train_fn, args, world_size):
-    mp.spawn(train_fn,
-             args=(world_size, args),
-             nprocs=world_size,
-             join=True)
+# 假设我们的数据是这个
+def get_dataset():
+    transform = torchvision.transforms.Compose([
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
+    my_trainset = torchvision.datasets.CIFAR10(root='./', train=True,
+                                               download=True,
+                                               transform=transform)
+    # DDP：使用DistributedSampler，DDP帮我们把细节都封装起来了。
+    #      用，就完事儿！sampler的原理，第二篇中有介绍。
+    train_sampler = torch.utils.data.distributed.DistributedSampler(my_trainset)
+    # DDP：需要注意的是，这里的batch_size指的是每个进程下的batch_size。
+    #      也就是说，总batch_size是这里的batch_size再乘以并行数(world_size)。
+    trainloader = torch.utils.data.DataLoader(my_trainset,
+                                              batch_size=16, num_workers=2,
+                                              sampler=train_sampler)
+    return trainloader
 
 
 def main():
+    ### 2. 初始化我们的模型、数据、各种配置  ####
+    # DDP：从外部得到local_rank参数
     parser = argparse.ArgumentParser()
-    parser.add_argument('-n', '--nodes', default=1, type=int, metavar='N',
-                        help='number of data loading workers (default: 4)')
-    parser.add_argument('-g', '--gpus', default=1, type=int,
-                        help='number of gpus per node')
-    parser.add_argument('-nr', '--nr', default=0, type=int,
-                        help='ranking within the nodes')
-    parser.add_argument('--epochs', default=2, type=int, metavar='N',
-                        help='number of total epochs to run')
-    args = parser.parse_args()
-    n_gpus = torch.cuda.device_count()
-    assert n_gpus >= 2, f"Requires at least 2 GPUs to run, but got {n_gpus}"
-    world_size = n_gpus
-    run_ddp(train, args, world_size)
+    parser.add_argument("--local_rank", default=-1, type=int)
+    FLAGS = parser.parse_args()
+    local_rank = FLAGS.local_rank
 
+    # DDP：DDP backend初始化
+    torch.cuda.set_device(local_rank)
+    dist.init_process_group(backend='nccl')  # nccl是GPU设备上最快、最推荐的后端
 
-def train(rank, world_size, args):
-    print(f"Running basic DDP example on rank {rank}.")
-    setup(rank, world_size)
+    # 准备数据，要在DDP初始化之后进行
+    trainloader = get_dataset()
 
-    # create model and move it to GPU with id rank
-    model = ConvNet().to(rank)
-    ddp_model = DDP(model, device_ids=[rank])
-    batch_size = 100
-    # define loss function (criterion) and optimizer
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(ddp_model.parameters(), 1e-3)
+    # 构造模型
+    model = ToyModel().to(local_rank)
+    # DDP: Load模型要在构造DDP模型之前，且只需要在master上加载就行了。
+    ckpt_path = None
+    if dist.get_rank() == 0 and ckpt_path is not None:
+        model.load_state_dict(torch.load(ckpt_path))
+    # DDP: 构造DDP model
+    model = DDP(model, device_ids=[local_rank], output_device=local_rank)
 
-    # Data loading code
-    train_dataset = torchvision.datasets.CIFAR10(root='./',
-                                               train=True,
-                                               transform=transforms.ToTensor(),
-                                               download=True)
-    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset,
-                                                                    num_replicas=world_size,
-                                                                    rank=rank)
-    train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                               batch_size=batch_size,
-                                               shuffle=False,
-                                               num_workers=0,
-                                               pin_memory=True,
-                                               sampler=train_sampler)
+    # DDP: 要在构造DDP model之后，才能用model初始化optimizer。
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.001)
 
-    start = datetime.now()
-    total_step = len(train_loader)
-    for epoch in range(args.epochs):
-        for i, (images, labels) in enumerate(train_loader):
-            images = images.cuda(non_blocking=True)
-            labels = labels.cuda(non_blocking=True)
-            # Forward pass
-            outputs = ddp_model(images)
-            loss = criterion(outputs, labels)
+    # 假设我们的loss是这个
+    loss_func = nn.CrossEntropyLoss().to(local_rank)
 
-            # Backward and optimize
+    ### 3. 网络训练  ###
+    model.train()
+    iterator = tqdm(range(100))
+    for epoch in iterator:
+        # DDP：设置sampler的epoch，
+        # DistributedSampler需要这个来指定shuffle方式，
+        # 通过维持各个进程之间的相同随机数种子使不同进程能获得同样的shuffle效果。
+        trainloader.sampler.set_epoch(epoch)
+        # 后面这部分，则与原来完全一致了。
+        for data, label in trainloader:
+            data, label = data.to(local_rank), label.to(local_rank)
             optimizer.zero_grad()
+            prediction = model(data)
+            loss = loss_func(prediction, label)
             loss.backward()
+            iterator.desc = "loss = %0.3f" % loss
             optimizer.step()
-            if (i + 1) % 100 == 0:
-                print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}'.format(epoch + 1, args.epochs, i + 1, total_step,
-                                                                         loss.item()))
-
-    print("Training complete in: " + str(datetime.now() - start))
+        # DDP:
+        # 1. save模型的时候，和DP模式一样，有一个需要注意的点：保存的是model.module而不是model。
+        #    因为model其实是DDP model，参数是被`model=DDP(model)`包起来的。
+        # 2. 只需要在进程0上保存一次就行了，避免多次保存重复的东西。
+        if dist.get_rank() == 0:
+            torch.save(model.module.state_dict(), "%d.ckpt" % epoch)
 
 
 if __name__ == '__main__':
     main()
+
+################
+## Bash运行
+# DDP: 使用torch.distributed.launch启动DDP模式
+# 使用CUDA_VISIBLE_DEVICES，来决定使用哪些GPU
+# CUDA_VISIBLE_DEVICES="0,1" python -m torch.distributed.launch --nproc_per_node 2 main.py
