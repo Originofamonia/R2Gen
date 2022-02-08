@@ -58,10 +58,10 @@ def train(gpu, args):
     criterion = nn.CrossEntropyLoss().cuda(gpu)
     optimizer = torch.optim.SGD(model.parameters(), 1e-4)
     # Data loading code
-    train_dataset = torchvision.datasets.MNIST(root='./data',
+    train_dataset = torchvision.datasets.MNIST(root='./',
                                                train=True,
                                                transform=transforms.ToTensor(),
-                                               download=True)
+                                               download=False)
     train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
                                                batch_size=batch_size,
                                                shuffle=True,
