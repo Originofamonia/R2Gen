@@ -24,7 +24,7 @@ from torch.cuda import amp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 
-from ddp import setup, cleanup, run_ddp
+from ddp_torch import setup, cleanup, run_ddp
 
 
 def create_data_loaders(rank: int,
