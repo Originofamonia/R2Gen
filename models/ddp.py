@@ -1,4 +1,5 @@
 # https://pytorch.org/tutorials/intermediate/ddp_tutorial.html
+# https://pytorch.org/docs/stable/notes/ddp.html
 
 import os
 import sys

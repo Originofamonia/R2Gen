@@ -73,6 +73,8 @@ def parse_agrs():
 
     # Trainer settings
     parser.add_argument('--n_gpu', type=int, default=1, help='the number of gpus to be used.')
+    parser.add_argument('--ddp', type=bool, default=True,
+                        help='use pytorch DDP')
     parser.add_argument('--epochs', type=int, default=10, help='the number of training epochs.')
     parser.add_argument('--save_dir', type=str, default='results/iu_xray', help='the patch to save the models.')
     parser.add_argument('--record_dir', type=str, default='records/', help='the patch to save the results of experiments')
