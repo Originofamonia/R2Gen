@@ -29,7 +29,7 @@ from ddp_torch import setup, cleanup, run_ddp
 
 def create_data_loaders(rank: int,
                         world_size: int,
-                        batch_size: int) -> Tuple[DataLoader, DataLoader]:
+                        batch_size: int):
     
     dataset_loc = './'
 
