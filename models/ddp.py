@@ -3,6 +3,7 @@
 
 import os
 import sys
+import argparse
 import tempfile
 import torch
 import torch.distributed as dist
@@ -56,10 +57,10 @@ def demo_basic(rank, world_size, opt):
     cleanup()
 
 
-def run_demo(demo_fn, world_size, opt):
+def run_demo(demo_fn, opt):
     mp.spawn(demo_fn,
-             args=(world_size, opt),
-             nprocs=world_size,
+             args=(opt.world_size, opt),
+             nprocs=opt.world_size,
              join=True)
 
 
@@ -148,14 +149,18 @@ def demo_checkpoint(rank, world_size):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--local_rank", type=int, default=0)
+    parser.add_argument("--input_dim", type=int, default=10)
+    opt = parser.parse_args()
     n_gpus = torch.cuda.device_count()
     assert n_gpus >= 2, f"Requires at least 2 GPUs to run, but got {n_gpus}"
-    world_size = n_gpus
-    run_demo(demo_basic, world_size, 10)
+    # world_size = n_gpus
+    opt.world_size = n_gpus
+    run_demo(demo_basic, opt)
     # run_demo(demo_checkpoint, world_size)
     # run_demo(demo_model_parallel, world_size)
 
 
 if __name__ == "__main__":
     main()
-    # hhhh
