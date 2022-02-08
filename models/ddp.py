@@ -42,7 +42,7 @@ def demo_basic(rank, world_size, opt):
     setup(rank, world_size)
 
     # create model and move it to GPU with id rank
-    model = ToyModel(opt).to(rank)
+    model = ToyModel(opt.inputs_dim).to(rank)
     ddp_model = DDP(model, device_ids=[rank])
 
     loss_fn = nn.MSELoss()
