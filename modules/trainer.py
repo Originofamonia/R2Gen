@@ -253,5 +253,5 @@ class Trainer(BaseTrainer):
 
 
 def DDPTrainer(rank, world_size, model, criterion, metric_ftns, optimizer, args):
-    print(f"Running basic DDP example on rank {rank}.")
+    print(f"Running basic DDP trainer on rank {rank}.")
     setup(rank, world_size)
