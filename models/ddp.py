@@ -27,9 +27,9 @@ def cleanup():
 
 
 class ToyModel(nn.Module):
-    def __init__(self, inputs=10):
+    def __init__(self, inputs_dim=10):
         super(ToyModel, self).__init__()
-        self.net1 = nn.Linear(inputs, 10)
+        self.net1 = nn.Linear(inputs_dim, 10)
         self.relu = nn.ReLU()
         self.net2 = nn.Linear(10, 5)
 
@@ -151,7 +151,7 @@ def demo_checkpoint(rank, world_size):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--local_rank", type=int, default=0)
-    parser.add_argument("--input_dim", type=int, default=10)
+    parser.add_argument("--inputs_dim", type=int, default=10)
     opt = parser.parse_args()
     n_gpus = torch.cuda.device_count()
     assert n_gpus >= 2, f"Requires at least 2 GPUs to run, but got {n_gpus}"
