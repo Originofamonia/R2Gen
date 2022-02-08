@@ -1,4 +1,5 @@
 # https://yangkky.github.io/2019/07/08/distributed-pytorch-tutorial.html
+# https://github.com/yangkky/distributed_tutorial/blob/master/src/mnist-distributed.py
 import os
 from datetime import datetime
 import argparse
