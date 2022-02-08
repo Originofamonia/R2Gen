@@ -12,7 +12,7 @@ import torch.distributed as dist
 from apex.parallel import DistributedDataParallel as DDP
 from apex import amp
 
-from models.ddp import setup
+from ddp import setup
 
 
 class ConvNet(nn.Module):
