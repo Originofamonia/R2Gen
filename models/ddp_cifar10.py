@@ -34,7 +34,7 @@ def main():
                         help='learning rate')  
     parser.add_argument('--save', default=True, type=bool,
                         help='save model after training')
-    parser.add_argument('--resume', default=True, type=bool,
+    parser.add_argument('--resume', default=False, type=bool,
                         help='load saved model and resume training')
     parser.add_argument('--ckpt_path', default=f'model.pt', type=str,
                         help='ckpt path')
@@ -108,7 +108,7 @@ def train(gpu, opt, train_dataset, model, loss_fn, optimizer):
                                 num_workers=2,
                                 pin_memory=True)
 
-    if opt.resume:
+    if opt.resume and os.path.exists(opt.ckpt_path):
         print(f'resume training: {gpu}')
         if opt.rank != -1:
             dist.barrier()
