@@ -1,7 +1,10 @@
 """
 https://github.com/Originofamonia/vinbigdata_yolov5/blob/main/yolov5/train.py
 unsuccessful attempt to learn DDP from previous yolo
+https://github.com/yangkky/distributed_tutorial/blob/master/src/mnist-distributed.py
+dataset
 """
+from cProfile import label
 import os
 import argparse
 from pathlib import Path
@@ -21,60 +24,7 @@ from torch.cuda import amp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 
-
-def select_device(device='', batch_size=None):
-    # device = 'cpu' or '0' or '0,1,2,3'
-    cpu_request = device.lower() == 'cpu'
-    if device and not cpu_request:  # if device requested other than 'cpu'
-        os.environ['CUDA_VISIBLE_DEVICES'] = device  # set environment variable
-        assert torch.cuda.is_available(), f'CUDA unavailable, invalid device {device} requested'  # check availablity
-
-    cuda = False if cpu_request else torch.cuda.is_available()
-    if cuda:
-        c = 1024 ** 2  # bytes to MB
-        ng = torch.cuda.device_count()
-        if ng > 1 and batch_size:  # check that batch_size is compatible with device_count
-            assert batch_size % ng == 0, f'batch-size {batch_size} not multiple of GPU count {ng}'
-        x = [torch.cuda.get_device_properties(i) for i in range(ng)]
-        s = f'Using torch {torch.__version__} '
-        for i, d in enumerate((device or '0').split(',')):
-            if i == 1:
-                s = ' ' * len(s)
-            # logger.info(f"{s}CUDA:{d} ({x[i].name}, {x[i].total_memory / c}MB)")
-    # else:
-        # logger.info(f'Using torch {torch.__version__} CPU')
-
-    # logger.info('')  # skip a line
-    return torch.device(f'cuda:0' if cuda else 'cpu')
-
-
-def init_seeds(seed=0):
-    random.seed(seed)
-    np.random.seed(seed)
-    init_torch_seeds(seed)
-
-
-def init_torch_seeds(seed=0):
-    # Speed-reproducibility tradeoff https://pytorch.org/docs/stable/notes/randomness.html
-    torch.manual_seed(seed)
-    if seed == 0:  # slower, more reproducible
-        cudnn.deterministic = True
-        cudnn.benchmark = False
-    else:  # faster, less reproducible
-        cudnn.deterministic = False
-        cudnn.benchmark = True
-
-
-@contextmanager
-def torch_distributed_zero_first(local_rank: int):
-    """
-    Decorator to make all processes in distributed training wait for each local_master to do something.
-    """
-    if local_rank not in [-1, 0]:
-        torch.distributed.barrier()
-    yield
-    if local_rank == 0:
-        torch.distributed.barrier()
+from ddp import setup, cleanup, run_ddp
 
 
 def create_data_loaders(rank: int,
@@ -136,28 +86,35 @@ class ConvNet(nn.Module):
         return out
 
 
-def train(hyp, opt, device):
-    save_dir, epochs, batch_size, total_batch_size, weights, rank = \
-        Path(opt.save_dir), opt.epochs, opt.batch_size, opt.total_batch_size, opt.weights, opt.global_rank
-    
-    cuda = device.type != 'cpu'
-    pretrained = weights.endswith('.pt')
+def train(rank, world_size, opt):
+    print(f'run DDP example on cifar10 rank: {rank}')
+    setup(rank, world_size)
 
-    model = ConvNet().to(device)
+    model = ConvNet().to(rank)
+    ddp_model = DDP(model, device_ids=[rank])
 
-    if opt.adam:
-        optimizer = optim.Adam(model.parameters(), lr=1e-3, betas=(0.9, 0.999))  # adjust beta1 to momentum
-    else:
-        optimizer = optim.SGD(model.parameters(), lr=1e-3, momentum=0.9, nesterov=True)
-    
-    lf = lambda x: ((1 + math.cos(x * math.pi / epochs)) / 2) * (1 - 0.2) + 0.2  # cosine
-    scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
+    loss_fn = nn.CrossEntropyLoss()
+    optimizer = optim.SGD(ddp_model.parameters(), lr=1e-3)
 
-    # SyncBatchNorm
-    if opt.sync_bn and cuda and rank != -1:
-        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model).to(device)
-        print('Using SyncBatchNorm()')
+    train_loader, test_loader = create_data_loaders(rank, world_size, opt.batch_size)
 
+    for e in range(opt.epochs):
+        pbar = tqdm(train_loader)
+        for j, batch in enumerate(pbar):
+            batch = tuple(item.to(opt.device) for item in batch)
+            imgs, labels = batch
+            
+            optimizer.zero_grad()
+            outputs = ddp_model(imgs)
+            loss = loss_fn(outputs, labels)
+            loss.backward()
+            optimizer.step()
+
+            if j % 100 == 0:
+                desc = f'Epoch: {e}/{opt.epochs}, step: {j}, loss: {loss.item():.3f}'
+                pbar.set_description(desc)
+
+    cleanup()
 
 
 def main():
@@ -169,7 +126,7 @@ def main():
                         help='model for datasets')
     parser.add_argument('--hyp', type=str, default='data/hyp.scratch.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=2)
-    parser.add_argument('--batch-size', type=int, default=8, help='total batch size for all GPUs')
+    parser.add_argument('--batch_size', type=int, default=64, help='total batch size for all GPUs')
     parser.add_argument('--img-size', nargs='+', type=int, default=[640, 640], help='[train, test] image sizes')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
@@ -190,7 +147,7 @@ def main():
     parser.add_argument('--bucket', type=str, default='', help='gsutil bucket')
     parser.add_argument('--cache-images', action='store_true', help='cache images for faster training')
     parser.add_argument('--image-weights', action='store_true', help='use weighted image selection for training')
-    parser.add_argument('--device', default='0,1', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default='cuda', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--multi-scale', action='store_true', help='vary img-size +/- 50%%')
     parser.add_argument('--single-cls', action='store_true', help='train multi-class data as single-class')
     parser.add_argument('--adam', action='store_true', help='use torch.optim.Adam() optimizer')
@@ -203,23 +160,8 @@ def main():
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     opt = parser.parse_args()
+    n_gpus = torch.cuda.device_count()
+    assert n_gpus >= 2, f"Requires at least 2 GPUs to run, but got {n_gpus}"
+    opt.world_size = n_gpus
 
-    # Set DDP variables
-    opt.total_batch_size = opt.batch_size
-    opt.world_size = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1
-    opt.global_rank = int(os.environ['RANK']) if 'RANK' in os.environ else -1
-    # set_logging(opt.global_rank)
-    # if opt.global_rank in [-1, 0]:
-    #     check_git_status()
-
-    # DDP mode
-    device = select_device(opt.device, batch_size=opt.batch_size)
-    if opt.local_rank != -1:
-        assert torch.cuda.device_count() > opt.local_rank
-        torch.cuda.set_device(opt.local_rank)
-        device = torch.device('cuda', opt.local_rank)
-        dist.init_process_group(backend='nccl', init_method='env://')  # distributed backend
-        assert opt.batch_size % opt.world_size == 0, '--batch-size must be multiple of CUDA device count'
-        opt.batch_size = opt.total_batch_size // opt.world_size
-    
-    train(None, opt, device)
+    run_ddp(train, opt)

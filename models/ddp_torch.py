@@ -16,7 +16,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
+    os.environ['MASTER_PORT'] = '12444'
 
     # initialize the process group
     dist.init_process_group("gloo", rank=rank, world_size=world_size)
@@ -38,6 +38,9 @@ class ToyModel(nn.Module):
 
 
 def demo_basic(rank, world_size, opt):
+    """
+    corresponds to train_fn
+    """
     print(f"Running basic DDP example on rank {rank}.")
     setup(rank, world_size)
 
@@ -57,7 +60,7 @@ def demo_basic(rank, world_size, opt):
     cleanup()
 
 
-def run_demo(demo_fn, opt):
+def run_ddp(demo_fn, opt):
     mp.spawn(demo_fn,
              args=(opt.world_size, opt),
              nprocs=opt.world_size,
@@ -155,9 +158,8 @@ def main():
     opt = parser.parse_args()
     n_gpus = torch.cuda.device_count()
     assert n_gpus >= 2, f"Requires at least 2 GPUs to run, but got {n_gpus}"
-    # world_size = n_gpus
     opt.world_size = n_gpus
-    run_demo(demo_basic, opt)
+    run_ddp(demo_basic, opt)
     # run_demo(demo_checkpoint, world_size)
     # run_demo(demo_model_parallel, world_size)
 
