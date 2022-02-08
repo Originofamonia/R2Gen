@@ -165,3 +165,7 @@ def main():
     opt.world_size = n_gpus
 
     run_ddp(train, opt)
+
+
+if __name__ == '__main__':
+    main()
