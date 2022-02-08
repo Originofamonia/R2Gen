@@ -1,66 +1,61 @@
-"""
-https://github.com/Originofamonia/vinbigdata_yolov5/blob/main/yolov5/train.py
-unsuccessful attempt to learn DDP from previous yolo
-https://github.com/yangkky/distributed_tutorial/blob/master/src/mnist-distributed.py
-dataset
-"""
-from cProfile import label
 import os
+from datetime import datetime
 import argparse
-from pathlib import Path
-import random
-import math
-import numpy as np
+import torch.multiprocessing as mp
+import torchvision
+import torchvision.transforms as transforms
 import torch
-import torch.backends.cudnn as cudnn
-import torch.distributed as dist
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-import torch.optim.lr_scheduler as lr_scheduler
-from torch.utils.data import DataLoader, DistributedSampler
-from torchvision import datasets, transforms
-from torch.cuda import amp
+import torch.distributed as dist
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
-from tqdm import tqdm
+# from apex.parallel import DistributedDataParallel as DDP
+from torch.cuda import amp
 
-from ddp_torch import setup, cleanup, run_ddp
+
+def cleanup():
+    dist.destroy_process_group()
 
 
-def create_data_loaders(rank: int,
-                        world_size: int,
-                        batch_size: int):
-    
-    dataset_loc = './'
-
-    train_dataset = datasets.CIFAR10(dataset_loc,
-                                   download=True,
-                                   train=True,
-                                transform=transforms.ToTensor(),)
-    sampler = DistributedSampler(train_dataset,
-                                 num_replicas=world_size,  # Number of GPUs
-                                 rank=rank,  # GPU where process is running
-                                 shuffle=True,  # Shuffling is done by Sampler
-                                 seed=444)
-    train_loader = DataLoader(train_dataset,
-                              batch_size=batch_size,
-                              shuffle=False,  # This is mandatory to set this to False here, shuffling is done by Sampler
-                              num_workers=4,
-                              sampler=sampler,
-                              pin_memory=True)
-
-    # This is not necessary to use distributed sampler for the test or validation sets.
-    test_dataset = datasets.CIFAR10(dataset_loc,
-                                  download=True,
-                                  train=False,
-                                  transform=transforms.ToTensor(),)
-    test_loader = DataLoader(test_dataset,
-                             batch_size=batch_size,
-                             shuffle=False,
-                             num_workers=4,
-                             pin_memory=True)
-
-    return train_loader, test_loader
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-n', '--nodes', default=1, type=int, metavar='N',
+                        help='number of server nodes')
+    parser.add_argument('-g', '--gpus', default=2, type=int,
+                        help='number of gpus per node')
+    parser.add_argument('-nr', '--rank', default=0, type=int,
+                        help='ranking within the nodes, whether use DDP: 0, non-DDP: -1')
+    parser.add_argument('--batch_size', default=128, type=int,
+                        help='batch size')
+    parser.add_argument('--seed', default=444, type=int,
+                        help='seed')
+    parser.add_argument('--lr', default=1e-3, type=float,
+                        help='learning rate')  
+    parser.add_argument('--save', default=True, type=bool,
+                        help='save model after training')
+    parser.add_argument('--resume', default=True, type=bool,
+                        help='load saved model and resume training')
+    parser.add_argument('--ckpt_path', default=f'model.pt', type=str,
+                        help='ckpt path')
+    parser.add_argument('--epochs', default=2, type=int, metavar='N',
+                        help='number of total epochs to run')
+    opt = parser.parse_args()
+    torch.manual_seed(opt.seed)
+    train_dataset = torchvision.datasets.CIFAR10(root='./',
+                                               train=True,
+                                               transform=transforms.ToTensor(),
+                                               download=True)
+    model = ConvNet()
+    loss_fn = nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), opt.lr)
+    if opt.rank != -1:
+        opt.world_size = opt.gpus * opt.nodes
+        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_PORT'] = '14444'
+        mp.spawn(train, nprocs=opt.gpus, args=(opt, train_dataset, model, loss_fn, optimizer))
+    else:
+        train('1', opt, train_dataset, model, loss_fn, optimizer)
 
 
 class ConvNet(nn.Module):
@@ -86,85 +81,72 @@ class ConvNet(nn.Module):
         return out
 
 
-def train(rank, world_size, opt):
-    print(f'run DDP example on cifar10 rank: {rank}')
-    setup(rank, world_size)
+def train(gpu, opt, train_dataset, model, loss_fn, optimizer):
+    print(f'using gpu: {gpu}')
+    torch.cuda.set_device(int(gpu))
+    model.cuda(int(gpu))
+    if opt.rank != -1:
+        rank = opt.rank * opt.gpus + gpu
+        dist.init_process_group(backend='nccl', init_method='env://', 
+                                world_size=opt.world_size, rank=rank)
+        
+        model = DDP(model, device_ids=[gpu])
+        # Data loading code
+        train_sampler = DistributedSampler(train_dataset,
+                                        num_replicas=opt.world_size,
+                                        rank=rank)
+        train_loader = DataLoader(dataset=train_dataset,
+                                batch_size=opt.batch_size,
+                                shuffle=False,  # must be False
+                                num_workers=2,
+                                pin_memory=True,
+                                sampler=train_sampler)
+    else:
+        train_loader = DataLoader(dataset=train_dataset,
+                                batch_size=opt.batch_size,
+                                shuffle=True,
+                                num_workers=2,
+                                pin_memory=True)
 
-    model = ConvNet().to(rank)
-    ddp_model = DDP(model, device_ids=[rank])
+    if opt.resume:
+        print(f'resume training: {gpu}')
+        if opt.rank != -1:
+            dist.barrier()
+            map_location = {f'cuda:0': f'cuda:{gpu}'}
+            print(f'map location: {map_location}')
+            model.load_state_dict(torch.load(opt.ckpt_path, 
+                                  map_location=map_location))
+        else:  # DDP, non-DDP model are different
+            model.load_state_dict(torch.load(opt.ckpt_path))
 
-    loss_fn = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(ddp_model.parameters(), lr=1e-3)
-
-    train_loader, test_loader = create_data_loaders(rank, world_size, opt.batch_size)
-
-    for e in range(opt.epochs):
-        pbar = tqdm(train_loader)
-        for j, batch in enumerate(pbar):
-            batch = tuple(item.to(opt.device) for item in batch)
-            imgs, labels = batch
-            
-            optimizer.zero_grad()
-            outputs = ddp_model(imgs)
+    start = datetime.now()
+    total_step = len(train_loader)
+    for epoch in range(opt.epochs):
+        for j, batch in enumerate(train_loader):
+            batch = tuple(item.cuda() for item in batch)
+            images, labels = batch
+            # Forward pass
+            outputs = model(images)
             loss = loss_fn(outputs, labels)
+
+            # Backward and optimize
+            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            if (j) % 100 == 0 and gpu:
+                print(f'Epoch [{epoch}/{opt.epochs}], Step [{j}/{total_step}], Loss: {loss.item():.3f}')
+    
+    if gpu and opt.save:
+        # All processes should see same parameters as they all start from same
+        # random parameters and gradients are synchronized in backward passes.
+        # Therefore, saving it in one process is sufficient.
+        print(f'save model: {gpu}')
+        torch.save(model.state_dict(), opt.ckpt_path)
 
-            if j % 100 == 0:
-                desc = f'Epoch: {e}/{opt.epochs}, step: {j}, loss: {loss.item():.3f}'
-                pbar.set_description(desc)
-
+    if gpu:
+        print("Training complete in: " + str(datetime.now() - start))
+    
     cleanup()
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default='yolov5x.pt', help='initial weights path')
-    parser.add_argument('--cfg', type=str, default='models/yolov5x.yaml', help='model.yaml path')
-    parser.add_argument('--data', type=str, default='/home/qiyuan/2021summer/vinbigdata/vinbigdata.yaml', help='data.yaml path')
-    parser.add_argument('--model', type=str, default='yolo',
-                        help='model for datasets')
-    parser.add_argument('--hyp', type=str, default='data/hyp.scratch.yaml', help='hyperparameters path')
-    parser.add_argument('--epochs', type=int, default=2)
-    parser.add_argument('--batch_size', type=int, default=64, help='total batch size for all GPUs')
-    parser.add_argument('--img-size', nargs='+', type=int, default=[640, 640], help='[train, test] image sizes')
-    parser.add_argument('--rect', action='store_true', help='rectangular training')
-    parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
-    parser.add_argument('--nosave', action='store_true', help='only save final checkpoint')
-    parser.add_argument('--notest', action='store_true', help='only test final epoch')
-    parser.add_argument('--noautoanchor', action='store_true', help='disable autoanchor check')
-    parser.add_argument('--evolve', action='store_true', help='evolve hyperparameters')
-    parser.add_argument('--augment', default=True,
-                        help='augment data')
-    parser.add_argument('--verbose', default=True,
-                        help='print results per class')
-    parser.add_argument('--save_txt', default=False,
-                        help='auto labelling')
-    parser.add_argument('--save_hybrid', default=False,
-                        help='auto labelling')
-    parser.add_argument('--save_conf', default=False,
-                        help='save auto-label confidences')
-    parser.add_argument('--bucket', type=str, default='', help='gsutil bucket')
-    parser.add_argument('--cache-images', action='store_true', help='cache images for faster training')
-    parser.add_argument('--image-weights', action='store_true', help='use weighted image selection for training')
-    parser.add_argument('--device', default='cuda', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
-    parser.add_argument('--multi-scale', action='store_true', help='vary img-size +/- 50%%')
-    parser.add_argument('--single-cls', action='store_true', help='train multi-class data as single-class')
-    parser.add_argument('--adam', action='store_true', help='use torch.optim.Adam() optimizer')
-    parser.add_argument('--sync-bn', action='store_true', help='use SyncBatchNorm, only available in DDP mode')
-    parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')
-    parser.add_argument('--log-imgs', type=int, default=16, help='number of images for W&B logging, max 100')
-    parser.add_argument('--log-artifacts', action='store_true', help='log artifacts, i.e. final trained model')
-    parser.add_argument('--workers', type=int, default=4, help='maximum number of dataloader workers')
-    parser.add_argument('--project', default='runs/train', help='save to project/name')
-    parser.add_argument('--name', default='exp', help='save to project/name')
-    parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
-    opt = parser.parse_args()
-    n_gpus = torch.cuda.device_count()
-    assert n_gpus >= 2, f"Requires at least 2 GPUs to run, but got {n_gpus}"
-    opt.world_size = n_gpus
-
-    run_ddp(train, opt)
 
 
 if __name__ == '__main__':
