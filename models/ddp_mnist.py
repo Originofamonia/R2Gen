@@ -25,7 +25,7 @@ class ConvNet(nn.Module):
             nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2))
-        self.fc = nn.Linear(7*7*32, num_classes)
+        self.fc = nn.Linear(7 * 7 * 32, num_classes)
 
     def forward(self, x):
         out = self.layer1(x)
@@ -58,10 +58,10 @@ def train(gpu, args):
     criterion = nn.CrossEntropyLoss().cuda(gpu)
     optimizer = torch.optim.SGD(model.parameters(), 1e-4)
     # Data loading code
-    train_dataset = torchvision.datasets.MNIST(root='./',
-                                               train=True,
-                                               transform=transforms.ToTensor(),
-                                               download=False)
+    train_dataset = torchvision.datasets.CIFAR10(root='./',
+                                                 train=True,
+                                                 transform=transforms.ToTensor(),
+                                                 download=True)
     train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
                                                batch_size=batch_size,
                                                shuffle=True,
@@ -89,7 +89,7 @@ def train(gpu, args):
                     i + 1,
                     total_step,
                     loss.item())
-                   )
+                )
     if gpu == 0:
         print("Training complete in: " + str(datetime.now() - start))
 
