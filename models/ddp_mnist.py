@@ -40,7 +40,7 @@ class ConvNet(nn.Module):
 
 def run_ddp(train_fn, args, world_size):
     mp.spawn(train_fn,
-             args=(args, world_size,),
+             args=(world_size, args),
              nprocs=world_size,
              join=True)
 
@@ -62,7 +62,7 @@ def main():
     run_ddp(train, args, world_size)
 
 
-def train(args, rank, world_size):
+def train(rank, world_size, args):
     print(f"Running basic DDP example on rank {rank}.")
     setup(rank, world_size)
 
