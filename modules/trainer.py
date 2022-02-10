@@ -5,17 +5,11 @@ import time
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 import pandas as pd
 from numpy import inf
-
-
-def setup(rank, world_size):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
-
-    # initialize the process group
-    dist.init_process_group("gloo", rank=rank, world_size=world_size)
 
 
 def cleanup():
@@ -252,6 +246,111 @@ class Trainer(BaseTrainer):
         return log
 
 
-def DDPTrainer(rank, world_size, model, criterion, metric_ftns, optimizer, args):
-    print(f"Running basic DDP trainer on rank {rank}.")
-    setup(rank, world_size)
+def DDPTrainer(gpu, opt, model, criterion, metrics, optimizer, lr_scheduler,
+               train_loader, val_loader, test_loader):
+    print(f'using gpu: {gpu}')
+    torch.cuda.set_device(int(gpu))
+    model.cuda(int(gpu))
+
+    if opt.rank != -1:
+        rank = opt.rank * opt.gpus + gpu
+        dist.init_process_group(backend='nccl', init_method='env://', 
+                                world_size=opt.world_size, rank=rank)
+        
+        model = DDP(model, device_ids=[gpu])
+        # Data loading code
+        train_sampler = DistributedSampler(train_loader.dataset,
+                                        num_replicas=opt.world_size,
+                                        rank=rank)
+        train_loader.shuffle = False
+        train_loader.sampler = train_sampler
+        # train_loader = DataLoader(dataset=train_dataset,
+        #                         batch_size=opt.batch_size,
+        #                         shuffle=False,  # must be False
+        #                         num_workers=2,
+        #                         pin_memory=True,
+        #                         sampler=train_sampler)
+    # else:
+    #     train_loader = DataLoader(dataset=train_dataset,
+    #                             batch_size=opt.batch_size,
+    #                             shuffle=True,
+    #                             num_workers=2,
+    #                             pin_memory=True)
+
+    if opt.resume and os.path.exists(opt.ckpt_path):
+        print(f'resume training: {gpu}')
+        if opt.rank != -1:
+            dist.barrier()
+            map_location = {f'cuda:0': f'cuda:{gpu}'}
+            print(f'map location: {map_location}')
+            model.load_state_dict(torch.load(opt.ckpt_path, 
+                                  map_location=map_location))
+        else:  # DDP, non-DDP model are different
+            model.load_state_dict(torch.load(opt.ckpt_path))
+    
+    for e in range(opt.epochs):
+        model.train()
+        train_loss = 0
+        log_e = {'epoch': e}  # epoch log
+        for j, batch in enumerate(train_loader):
+            batch = tuple(t.cuda() for t in batch[1:])
+            images, reports_ids, reports_masks = batch
+            output = model(images, reports_ids, mode='train')
+            loss = criterion(output, reports_ids, reports_masks)
+            train_loss += loss.item()
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_value_(model.parameters(), 0.1)
+            optimizer.step()
+        log_b = {'train_loss': train_loss / len(train_loader)}  # batch log
+
+        model.eval()
+        with torch.no_grad():
+            val_gts, val_res = [], []
+            for j, batch in enumerate(val_loader):
+                batch = tuple(t.cuda() for t in batch[1:])
+                images, reports_ids, reports_masks = batch
+                output = model(images, mode='sample')
+                reports = model.tokenizer.decode_batch(output.cpu().numpy())
+                ground_truths = model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
+                val_res.extend(reports)
+                val_gts.extend(ground_truths)
+            val_met = metrics({i: [gt] for i, gt in enumerate(val_gts)},
+                              {i: [re] for i, re in enumerate(val_res)})
+            log_b.update(**{'val_' + k: v for k, v in val_met.items()})
+
+        model.eval()
+        with torch.no_grad():
+            test_gts, test_res = [], []
+            for j, batch in enumerate(test_loader):
+                batch = tuple(t.cuda() for t in batch[1:])
+                images, reports_ids, reports_masks = batch
+                output = model(images, mode='sample')
+                reports = model.tokenizer.decode_batch(output.cpu().numpy())
+                ground_truths = model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
+                test_res.extend(reports)
+                test_gts.extend(ground_truths)
+            test_met = metrics({i: [gt] for i, gt in enumerate(test_gts)},
+                               {i: [re] for i, re in enumerate(test_res)})
+            log_b.update(**{'test_' + k: v for k, v in test_met.items()})
+
+        lr_scheduler.step()
+
+        log_e.update(log_b)
+        for key, value in log_e.items():
+                print('\t{:15s}: {}'.format(str(key), value))
+
+    if gpu and opt.save_dir:
+        print(f'save model: {gpu}')
+        torch.save(model.state_dict(), opt.save_dir)
+    
+    # best_recorder = {'val': {mnt_metric: mnt_best},
+    #                  'test': {mnt_metric_test: mnt_best}}
+    # crt_time = time.asctime(time.localtime(time.time()))
+    # best_recorder['val']['time'] = crt_time
+    # best_recorder['test']['time'] = crt_time
+    # best_recorder['val']['seed'] = opt.seed
+    # best_recorder['test']['seed'] = opt.seed
+    # best_recorder['val']['best_model_from'] = 'val'
+    # best_recorder['test']['best_model_from'] = 'test'
+    cleanup()

@@ -3,15 +3,16 @@ import os
 import torch
 import argparse
 import numpy as np
+import torch.multiprocessing as mp
 from modules.tokenizers import Tokenizer
 from modules.dataloaders import R2DataLoader
 from modules.metrics import compute_scores
 from modules.optimizers import build_optimizer, build_lr_scheduler
-from modules.trainer import Trainer
+from modules.trainer import Trainer, DDPTrainer
 from modules.loss import compute_loss
 from models.r2gen import R2GenModel
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+# os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 
 def parse_agrs():
@@ -72,11 +73,13 @@ def parse_agrs():
     parser.add_argument('--block_trigrams', type=int, default=1, help='whether to use block trigrams.')
 
     # Trainer settings
-    parser.add_argument('--n_gpu', type=int, default=1, help='the number of gpus to be used.')
-    parser.add_argument('--ddp', type=bool, default=True,
-                        help='use pytorch DDP')
+    parser.add_argument('--nodes', default=1, type=int, metavar='N',
+                        help='number of server nodes')
+    parser.add_argument('--gpus', type=int, default=2, help='the number of gpus to be used.')
+    parser.add_argument('--rank', default=0, type=int,
+                        help='ranking within the nodes, whether use DDP: 0, non-DDP: -1')
     parser.add_argument('--epochs', type=int, default=10, help='the number of training epochs.')
-    parser.add_argument('--save_dir', type=str, default='results/iu_xray', help='the patch to save the models.')
+    parser.add_argument('--save_dir', type=str, default='results/iu_xray', help='the path to save the models.')
     parser.add_argument('--record_dir', type=str, default='records/', help='the patch to save the results of experiments')
     parser.add_argument('--save_period', type=int, default=10, help='the saving period.')
     parser.add_argument('--monitor_mode', type=str, default='max', choices=['min', 'max'], help='whether to max or min the metric.')
@@ -96,7 +99,7 @@ def parse_agrs():
     parser.add_argument('--gamma', type=float, default=0.1, help='the gamma of the learning rate scheduler.')
 
     # Others
-    parser.add_argument('--seed', type=int, default=9233, help='.')
+    parser.add_argument('--seed', type=int, default=444, help='.')
     parser.add_argument('--resume', type=str, help='whether to resume the training from existing checkpoints.')
 
     args = parser.parse_args()
@@ -105,37 +108,45 @@ def parse_agrs():
 
 def main():
     # parse arguments
-    args = parse_agrs()
+    opt = parse_agrs()
 
     # fix random seeds
-    torch.manual_seed(args.seed)
+    torch.manual_seed(opt.seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    np.random.seed(args.seed)
+    np.random.seed(opt.seed)
 
     # create tokenizer
-    tokenizer = Tokenizer(args)
+    tokenizer = Tokenizer(opt)
 
     # create data loader
-    train_dataloader = R2DataLoader(args, tokenizer, split='train', shuffle=True)
-    val_dataloader = R2DataLoader(args, tokenizer, split='val', shuffle=False)
-    test_dataloader = R2DataLoader(args, tokenizer, split='test', shuffle=False)
+    train_loader = R2DataLoader(opt, tokenizer, split='train', shuffle=False)
+    val_loader = R2DataLoader(opt, tokenizer, split='val', shuffle=False)
+    test_loader = R2DataLoader(opt, tokenizer, split='test', shuffle=False)
 
     # build model architecture
-    model = R2GenModel(args, tokenizer)
+    model = R2GenModel(opt, tokenizer)
 
     # get function handles of loss and metrics
     criterion = compute_loss
     metrics = compute_scores
 
     # build optimizer, learning rate scheduler
-    optimizer = build_optimizer(args, model)
-    lr_scheduler = build_lr_scheduler(args, optimizer)
+    optimizer = build_optimizer(opt, model)
+    lr_scheduler = build_lr_scheduler(opt, optimizer)
 
     # build trainer and start to train
-    trainer = Trainer(model, criterion, metrics, optimizer, args, lr_scheduler,
-                      train_dataloader, val_dataloader, test_dataloader)
-    trainer.train()
+    # trainer = Trainer(model, criterion, metrics, optimizer, args, lr_scheduler,
+    #                   train_loader, val_loader, test_loader)
+    # trainer.train()
+    if opt.rank != -1:
+        opt.world_size = opt.gpus * opt.nodes
+        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_PORT'] = '14444'
+        mp.spawn(DDPTrainer, nprocs=opt.gpus, args=(opt, model, criterion, metrics,
+            optimizer, lr_scheduler, train_loader, val_loader, test_loader))
+
+    # DDPTrainer(gpu, opt, model, loss_fn, optimizer, train_loader, val_loader, test_loader)
 
 
 if __name__ == '__main__':

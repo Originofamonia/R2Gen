@@ -36,7 +36,7 @@ def main():
                         help='save model after training')
     parser.add_argument('--resume', default=False, type=bool,
                         help='load saved model and resume training')
-    parser.add_argument('--ckpt_path', default=f'model.pt', type=str,
+    parser.add_argument('--ckpt_path', default=f'cifar_cnn.pt', type=str,
                         help='ckpt path')
     parser.add_argument('--epochs', default=2, type=int, metavar='N',
                         help='number of total epochs to run')
@@ -53,7 +53,8 @@ def main():
         opt.world_size = opt.gpus * opt.nodes
         os.environ['MASTER_ADDR'] = 'localhost'
         os.environ['MASTER_PORT'] = '14444'
-        mp.spawn(train, nprocs=opt.gpus, args=(opt, train_dataset, model, loss_fn, optimizer))
+        mp.spawn(train, nprocs=opt.gpus, args=(opt, train_dataset, model, 
+                 loss_fn, optimizer))
     else:
         train('1', opt, train_dataset, model, loss_fn, optimizer)
 
@@ -85,6 +86,7 @@ def train(gpu, opt, train_dataset, model, loss_fn, optimizer):
     print(f'using gpu: {gpu}')
     torch.cuda.set_device(int(gpu))
     model.cuda(int(gpu))
+
     if opt.rank != -1:
         rank = opt.rank * opt.gpus + gpu
         dist.init_process_group(backend='nccl', init_method='env://', 
