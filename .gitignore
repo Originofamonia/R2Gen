@@ -143,3 +143,12 @@ cython_debug/
 # Data
 data/iu_xray/
 data/mimic_cxr/
+models/cifar-10-python.tar.gz
+models/cifar-10-batches-py/batches.meta
+models/cifar-10-batches-py/data_batch_1
+models/cifar-10-batches-py/data_batch_2
+models/cifar-10-batches-py/data_batch_3
+models/cifar-10-batches-py/data_batch_4
+models/cifar-10-batches-py/data_batch_5
+models/cifar-10-batches-py/readme.html
+models/cifar-10-batches-py/test_batch
