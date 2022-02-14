@@ -21,7 +21,7 @@ class BaseTrainer(object):
         self.args = args
 
         # setup GPU device if available, move model into configured device
-        self.device, device_ids = self._prepare_device(args.n_gpu)
+        self.device, device_ids = self._prepare_device(args.gpus)
         self.model = model.to(self.device)
         # if len(device_ids) > 1:
         #     self.model = torch.nn.DataParallel(model, device_ids=device_ids)
@@ -186,35 +186,33 @@ class BaseTrainer(object):
 
 
 class Trainer(BaseTrainer):
-    def __init__(self, model, criterion, metric_ftns, optimizer, args,
-                 lr_scheduler, train_dataloader, val_dataloader,
-                 test_dataloader):
-        super(Trainer, self).__init__(model, criterion, metric_ftns, optimizer, args)
+    def __init__(self, model, criterion, metrics, optimizer, opt,
+                 lr_scheduler, train_loader, val_loader, test_loader):
+        super(Trainer, self).__init__(model, criterion, metrics, optimizer, opt)
         self.lr_scheduler = lr_scheduler
-        self.train_dataloader = train_dataloader
-        self.val_dataloader = val_dataloader
-        self.test_dataloader = test_dataloader
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        self.test_loader = test_loader
 
     def _train_epoch(self, epoch):
-
         train_loss = 0
         self.model.train()
-        for batch_idx, batch in enumerate(self.train_dataloader):
+        for batch_idx, batch in enumerate(self.train_loader):
             batch = tuple(t.to(self.device) for t in batch[1:])
             images, reports_ids, reports_masks = batch
+            self.optimizer.zero_grad()
             output = self.model(images, reports_ids, mode='train')
             loss = self.criterion(output, reports_ids, reports_masks)
             train_loss += loss.item()
-            self.optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_value_(self.model.parameters(), 0.1)
             self.optimizer.step()
-        log = {'train_loss': train_loss / len(self.train_dataloader)}
+        log = {'train_loss': train_loss / len(self.train_loader)}
 
         self.model.eval()
         with torch.no_grad():
             val_gts, val_res = [], []
-            for batch_idx, (images_id, images, reports_ids, reports_masks) in enumerate(self.val_dataloader):
+            for batch_idx, (images_id, images, reports_ids, reports_masks) in enumerate(self.val_loader):
                 images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(
                     self.device), reports_masks.to(self.device)
                 output = self.model(images, mode='sample')
@@ -229,7 +227,7 @@ class Trainer(BaseTrainer):
         self.model.eval()
         with torch.no_grad():
             test_gts, test_res = [], []
-            for batch_idx, (images_id, images, reports_ids, reports_masks) in enumerate(self.test_dataloader):
+            for batch_idx, (images_id, images, reports_ids, reports_masks) in enumerate(self.test_loader):
                 images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(
                     self.device), reports_masks.to(self.device)
                 output = self.model(images, mode='sample')

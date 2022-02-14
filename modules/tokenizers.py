@@ -4,10 +4,13 @@ from collections import Counter
 
 
 class Tokenizer(object):
-    def __init__(self, args):
-        self.ann_path = args.ann_path
-        self.threshold = args.threshold
-        self.dataset_name = args.dataset_name
+    """
+    id2word, word2id
+    """
+    def __init__(self, opt):
+        self.ann_path = opt.ann_path
+        self.threshold = opt.threshold
+        self.dataset_name = opt.dataset_name
         if self.dataset_name == 'iu_xray':
             self.clean_report = self.clean_report_iu_xray
         else:

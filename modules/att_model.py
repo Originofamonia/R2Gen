@@ -34,28 +34,28 @@ def pack_wrapper(module, att_feats, att_masks):
 
 
 class AttModel(CaptionModel):
-    def __init__(self, args, tokenizer):
+    def __init__(self, opt, tokenizer):
         super(AttModel, self).__init__()
-        self.args = args
+        self.opt = opt
         self.tokenizer = tokenizer
         self.vocab_size = len(tokenizer.idx2token)
-        self.input_encoding_size = args.d_model
-        self.rnn_size = args.d_ff
-        self.num_layers = args.num_layers
-        self.drop_prob_lm = args.drop_prob_lm
-        self.max_seq_length = args.max_seq_length
-        self.att_feat_size = args.d_vf
-        self.att_hid_size = args.d_model
+        self.input_encoding_size = opt.d_model
+        self.rnn_size = opt.d_ff
+        self.num_layers = opt.num_layers
+        self.drop_prob_lm = opt.drop_prob_lm
+        self.max_seq_length = opt.max_seq_length
+        self.att_feat_size = opt.d_vf
+        self.att_hid_size = opt.d_model
 
-        self.bos_idx = args.bos_idx
-        self.eos_idx = args.eos_idx
-        self.pad_idx = args.pad_idx
+        self.bos_idx = opt.bos_idx
+        self.eos_idx = opt.eos_idx
+        self.pad_idx = opt.pad_idx
 
-        self.use_bn = args.use_bn
+        self.use_bn = opt.use_bn
 
         self.embed = lambda x: x
         self.fc_embed = lambda x: x
-        self.att_embed = nn.Sequential(*(
+        self.att_embed = nn.Sequential(*(  # only a linear + relu + dropout
                 ((nn.BatchNorm1d(self.att_feat_size),) if self.use_bn else ()) +
                 (nn.Linear(self.att_feat_size, self.input_encoding_size),
                  nn.ReLU(),
@@ -136,7 +136,7 @@ class AttModel(CaptionModel):
         return seq, seqLogprobs
 
     def _sample(self, fc_feats, att_feats, att_masks=None):
-        opt = self.args.__dict__
+        opt = self.opt.__dict__
         sample_method = opt.get('sample_method', 'greedy')
         beam_size = opt.get('beam_size', 1)
         temperature = opt.get('temperature', 1.0)
