@@ -12,7 +12,7 @@ from modules.trainer import Trainer, DDPTrainer
 from modules.loss import compute_loss
 from models.r2gen import R2GenModel
 
-# os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 
 def parse_agrs():
@@ -136,17 +136,16 @@ def main():
     lr_scheduler = build_lr_scheduler(opt, optimizer)
 
     # build trainer and start to train
-    # trainer = Trainer(model, criterion, metrics, optimizer, args, lr_scheduler,
-    #                   train_loader, val_loader, test_loader)
-    # trainer.train()
-    if opt.rank != -1:
-        opt.world_size = opt.gpus * opt.nodes
-        os.environ['MASTER_ADDR'] = 'localhost'
-        os.environ['MASTER_PORT'] = '14444'
-        mp.spawn(DDPTrainer, nprocs=opt.gpus, args=(opt, model, criterion, metrics,
-            optimizer, lr_scheduler, train_loader, val_loader, test_loader))
+    trainer = Trainer(model, criterion, metrics, optimizer, opt, lr_scheduler,
+                      train_loader, val_loader, test_loader)
+    trainer.train()
 
-    # DDPTrainer(gpu, opt, model, loss_fn, optimizer, train_loader, val_loader, test_loader)
+    # if opt.rank != -1:
+    #     opt.world_size = opt.gpus * opt.nodes
+    #     os.environ['MASTER_ADDR'] = 'localhost'
+    #     os.environ['MASTER_PORT'] = '14444'
+    #     mp.spawn(DDPTrainer, nprocs=opt.gpus, args=(opt, model, criterion, metrics,
+    #         optimizer, lr_scheduler, train_loader, val_loader, test_loader))
 
 
 if __name__ == '__main__':

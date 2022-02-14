@@ -4,10 +4,10 @@ import torchvision.models as models
 
 
 class VisualExtractor(nn.Module):
-    def __init__(self, args):
+    def __init__(self, opt):
         super(VisualExtractor, self).__init__()
-        self.visual_extractor = args.visual_extractor
-        self.pretrained = args.visual_extractor_pretrained
+        self.visual_extractor = opt.visual_extractor
+        self.pretrained = opt.visual_extractor_pretrained
         model = getattr(models, self.visual_extractor)(pretrained=self.pretrained)
         modules = list(model.children())[:-2]
         self.model = nn.Sequential(*modules)

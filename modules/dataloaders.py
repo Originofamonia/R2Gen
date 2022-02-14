@@ -6,12 +6,12 @@ from .datasets import IuxrayMultiImageDataset, MimiccxrSingleImageDataset
 
 
 class R2DataLoader(DataLoader):
-    def __init__(self, args, tokenizer, split, shuffle):
-        self.args = args
-        self.dataset_name = args.dataset_name
-        self.batch_size = args.batch_size
+    def __init__(self, opt, tokenizer, split, shuffle):
+        self.opt = opt
+        self.dataset_name = opt.dataset_name
+        self.batch_size = opt.batch_size
         self.shuffle = shuffle
-        self.num_workers = args.num_workers
+        self.num_workers = opt.num_workers
         self.tokenizer = tokenizer
         self.split = split
 
@@ -31,9 +31,9 @@ class R2DataLoader(DataLoader):
                                      (0.229, 0.224, 0.225))])
 
         if self.dataset_name == 'iu_xray':
-            self.dataset = IuxrayMultiImageDataset(self.args, self.tokenizer, self.split, transform=self.transform)
+            self.dataset = IuxrayMultiImageDataset(self.opt, self.tokenizer, self.split, transform=self.transform)
         else:
-            self.dataset = MimiccxrSingleImageDataset(self.args, self.tokenizer, self.split, transform=self.transform)
+            self.dataset = MimiccxrSingleImageDataset(self.opt, self.tokenizer, self.split, transform=self.transform)
 
         self.init_kwargs = {
             'dataset': self.dataset,

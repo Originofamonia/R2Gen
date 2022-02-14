@@ -6,10 +6,10 @@ from torch.utils.data import Dataset
 
 
 class BaseDataset(Dataset):
-    def __init__(self, args, tokenizer, split, transform=None):
-        self.image_dir = args.image_dir
-        self.ann_path = args.ann_path
-        self.max_seq_length = args.max_seq_length
+    def __init__(self, opt, tokenizer, split, transform=None):
+        self.image_dir = opt.image_dir
+        self.ann_path = opt.ann_path
+        self.max_seq_length = opt.max_seq_length
         self.split = split
         self.tokenizer = tokenizer
         self.transform = transform

@@ -29,6 +29,9 @@ def attention(query, key, value, mask=None, dropout=None):
 
 
 def subsequent_mask(size):
+    """
+    mask out sebsequent positions
+    """
     attn_shape = (1, size, size)
     subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype('uint8')
     return torch.from_numpy(subsequent_mask) == 0
@@ -39,7 +42,7 @@ class Transformer(nn.Module):
         super(Transformer, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
-        self.src_embed = src_embed
+        self.src_embed = src_embed  # lambda x: x
         self.tgt_embed = tgt_embed
         self.rm = rm
 
@@ -125,7 +128,12 @@ class DecoderLayer(nn.Module):
         self.sublayer = clones(ConditionalSublayerConnection(d_model, dropout, rm_num_slots, rm_d_model), 3)
 
     def forward(self, x, hidden_states, src_mask, tgt_mask, memory):
-        m = hidden_states
+        """
+        x: [16, 59, 512] auto-regressive outputs
+        hidden_states: [16, 98, 512], z from encoder
+        memory: [16, 59, 1536], from RM, 1536 = 3 * 512
+        """
+        m = hidden_states  # z from encoder
         x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, tgt_mask), memory)
         x = self.sublayer[1](x, lambda x: self.src_attn(x, m, m, src_mask), memory)
         return self.sublayer[2](x, self.feed_forward, memory)
@@ -164,10 +172,14 @@ class ConditionalLayerNorm(nn.Module):
                 nn.init.constant_(m.bias, 0.1)
 
     def forward(self, x, memory):
-        mean = x.mean(-1, keepdim=True)
-        std = x.std(-1, keepdim=True)
-        delta_gamma = self.mlp_gamma(memory)
-        delta_beta = self.mlp_beta(memory)
+        """
+        x: [16, 59, 512], r in paper eq 15
+        memory: [16, 59, 1536] m_t in paper
+        """
+        mean = x.mean(-1, keepdim=True)  # [16, 59, 1]
+        std = x.std(-1, keepdim=True)  # [16, 59, 1]
+        delta_gamma = self.mlp_gamma(memory)  # [16, 59, 512]
+        delta_beta = self.mlp_beta(memory)  # [16, 59, 512]
         gamma_hat = self.gamma.clone()
         beta_hat = self.beta.clone()
         gamma_hat = torch.stack([gamma_hat] * x.size(0), dim=0)
@@ -271,17 +283,19 @@ class RelationalMemory(nn.Module):
 
         return memory
 
-    def forward_step(self, input, memory):
+    def forward_step(self, inputs, memory):
+        """
+        inputs: Y_t-1 [16, 512]
+        """
         memory = memory.reshape(-1, self.num_slots, self.d_model)
-        q = memory
-        k = torch.cat([memory, input.unsqueeze(1)], 1)
-        v = torch.cat([memory, input.unsqueeze(1)], 1)
-        next_memory = memory + self.attn(q, k, v)
+        q = memory  # M_t-1
+        k = torch.cat([memory, inputs.unsqueeze(1)], 1)
+        v = torch.cat([memory, inputs.unsqueeze(1)], 1)
+        next_memory = memory + self.attn(q, k, v)  # M_t-1 + Z
         next_memory = next_memory + self.mlp(next_memory)
 
-        gates = self.W(input.unsqueeze(1)) + self.U(torch.tanh(memory))
-        gates = torch.split(gates, split_size_or_sections=self.d_model, dim=2)
-        input_gate, forget_gate = gates
+        gates = self.W(inputs.unsqueeze(1)) + self.U(torch.tanh(memory))
+        input_gate, forget_gate = torch.split(gates, split_size_or_sections=self.d_model, dim=2)
         input_gate = torch.sigmoid(input_gate)
         forget_gate = torch.sigmoid(forget_gate)
 
@@ -321,22 +335,22 @@ class EncoderDecoder(AttModel):
                 nn.init.xavier_uniform_(p)
         return model
 
-    def __init__(self, args, tokenizer):
-        super(EncoderDecoder, self).__init__(args, tokenizer)
-        self.args = args
-        self.num_layers = args.num_layers
-        self.d_model = args.d_model
-        self.d_ff = args.d_ff
-        self.num_heads = args.num_heads
-        self.dropout = args.dropout
-        self.rm_num_slots = args.rm_num_slots
-        self.rm_num_heads = args.rm_num_heads
-        self.rm_d_model = args.rm_d_model
+    def __init__(self, opt, tokenizer):
+        super(EncoderDecoder, self).__init__(opt, tokenizer)
+        self.args = opt
+        self.num_layers = opt.num_layers
+        self.d_model = opt.d_model
+        self.d_ff = opt.d_ff
+        self.num_heads = opt.num_heads
+        self.dropout = opt.dropout
+        self.rm_num_slots = opt.rm_num_slots
+        self.rm_num_heads = opt.rm_num_heads
+        self.rm_d_model = opt.rm_d_model
 
         tgt_vocab = self.vocab_size + 1
 
         self.model = self.make_model(tgt_vocab)
-        self.logit = nn.Linear(args.d_model, tgt_vocab)
+        self.logit = nn.Linear(opt.d_model, tgt_vocab)
 
     def init_hidden(self, bsz):
         return []
